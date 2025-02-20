@@ -83,6 +83,7 @@ subroutine soca_model2geovals_changevar_f90(c_key_geom, c_key_xin, c_key_xout) &
           data_out(kk, ii) = data_out(kk-1,ii) +  0.5 * (data2(kk, ii) + data2(kk-1, ii))
         end do
       end do
+      call field_out%set_dirty(field2%dirty());
       call field2%final()
 
     case ('distance_from_coast')
@@ -91,6 +92,7 @@ subroutine soca_model2geovals_changevar_f90(c_key_geom, c_key_xin, c_key_xout) &
       do ii = 1, field2%shape(2)
         data_out(1, ii) = data2(1, ii)
       end do
+      call field_out%set_dirty(field2%dirty())
       call field2%final()
 
     case ('sea_area_fraction')
@@ -120,12 +122,13 @@ subroutine soca_model2geovals_changevar_f90(c_key_geom, c_key_xin, c_key_xout) &
     case ('skin_temperature_at_surface_where_sea')
       field2 = xin%afieldset%field("sea_water_potential_temperature")
       call field2%data(data2)
-      do ii = 1, field2%shape(2)
-        do kk = 1, field2%shape(1)
-          ! TODO: should we be skipping land??
-          data_out(kk, ii) = data2(kk, ii) + 273.15_kind_real
+      do jj=geom%jsc,geom%jec
+        do ii=geom%isc,geom%iec
+          idx = geom%atlas_ij2idx(ii,jj)
+          data_out(1, idx) = geom%mask2d(ii,jj) * data2(1, idx) + 273.15_kind_real
         end do
       end do
+      call field_out%set_dirty()
       call field2%final()
 
     case ('sea_floor_depth_below_sea_surface')
@@ -137,6 +140,7 @@ subroutine soca_model2geovals_changevar_f90(c_key_geom, c_key_xin, c_key_xout) &
           data_out(1, ii) = data_out(1, ii) + data2(kk, ii)
         end do
       end do
+      call field_out%set_dirty(field2%dirty())
       call field2%final()
 
     ! identity operators
@@ -163,6 +167,7 @@ subroutine soca_model2geovals_changevar_f90(c_key_geom, c_key_xin, c_key_xout) &
         call abor1_ftn( 'error in soca_model2geovals_changevar_f90 processing ' &
                         // field_out%name() )
       end if
+      call field_out%set_dirty(field2%dirty())
       call field2%final()
     end select
 

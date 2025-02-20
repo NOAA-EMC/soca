@@ -5,7 +5,7 @@
 
 module soca_soca2cice_mod
 
-use atlas_module, only: atlas_geometry, atlas_indexkdtree
+use atlas_module, only: atlas_geometry, atlas_indexkdtree, atlas_field
 use fckit_configuration_module, only: fckit_configuration
 use fckit_exception_module, only: fckit_exception
 use fckit_mpi_module, only: fckit_mpi_comm
@@ -125,7 +125,6 @@ subroutine soca_soca2cice_changevar(self, geom, xa, xm)
 
   ! write cice restart
   call self%cice%write(geom)
-
 end subroutine soca_soca2cice_changevar
 
 ! ------------------------------------------------------------------------------
@@ -148,31 +147,37 @@ subroutine check_ice_bounds(self, geom, xm)
   type(soca_geom), target, intent(in)  :: geom
   type(soca_state),      intent(inout) :: xm
 
-  type(soca_field), pointer :: aice_ana, hice_ana, hsno_ana
+  type(atlas_field) :: aice, hice, hsno
+  real(kind=kind_real), pointer :: data_aice(:,:), data_hice(:,:), data_hsno(:,:)
 
-  ! pointers to soca fields (most likely an analysis)
-  call xm%get("sea_ice_area_fraction",aice_ana)
-  call xm%get("sea_ice_thickness",hice_ana)
-  call xm%get("sea_ice_snow_thickness",hsno_ana)
+  aice = xm%afieldset%field("sea_ice_area_fraction")
+  hice = xm%afieldset%field("sea_ice_thickness")
+  hsno = xm%afieldset%field("sea_ice_snow_thickness")
+  call aice%data(data_aice)
+  call hice%data(data_hice)
+  call hsno%data(data_hsno)
 
   ! check seaice fraction bounds
-  where (aice_ana%val<0_kind_real)
-     aice_ana%val = 0_kind_real
+  where (data_aice<0_kind_real)
+     data_aice = 0_kind_real
   end where
-  where (aice_ana%val>1_kind_real)
-     aice_ana%val = 1_kind_real
+  where (data_aice>1_kind_real)
+     data_aice = 1_kind_real
   end where
 
   ! check seaice thickness bounds
-  where (hice_ana%val<0_kind_real)
-     hice_ana%val = 0_kind_real
+  where (data_hice<0_kind_real)
+     data_hice = 0_kind_real
   end where
 
   ! check snow thickness bounds
-  where (hsno_ana%val<0_kind_real)
-     hsno_ana%val = 0_kind_real
+  where (data_hsno<0_kind_real)
+     data_hsno = 0_kind_real
   end where
 
+  call aice%final()
+  call hice%final()
+  call hsno%final()
 end subroutine check_ice_bounds
 
 ! ------------------------------------------------------------------------------
@@ -183,27 +188,30 @@ subroutine shuffle_ice(self, geom, xm)
   type(soca_geom), target, intent(in)  :: geom
   type(soca_state),      intent(inout) :: xm
 
-  real(kind=kind_real) :: aice, seaice_edge
-  integer :: i, j, k, n, ii, jj
-  type(soca_field), pointer :: s_ana, aice_ana
+  real(kind=kind_real) :: local_aice, seaice_edge
+  integer :: i, j, k, n, ii, jj, atlas_idx
   integer :: minidx(1), nn_max
   integer, allocatable :: idx(:)
   real(kind=kind_real), allocatable :: testmin(:)
   type(cice_state) :: cice_in
 
+  type(atlas_field) :: socn, aice
+  real(kind=kind_real), pointer :: data_socn(:,:), data_aice(:,:)
+
+  socn = xm%afieldset%field("sea_water_salinity")
+  aice = xm%afieldset%field("sea_ice_area_fraction")
+  call socn%data(data_socn)
+  call aice%data(data_aice)
+
   ! Make sure the search tree is smaller than the data size
   nn_max = min(self%cice%agg%n_src, self%shuffle_n)
   allocate(idx(nn_max), testmin(nn_max))
 
-  ! pointers to soca fields (most likely an analysis)
-  call xm%get("sea_water_salinity",s_ana)
-  call xm%get("sea_ice_area_fraction",aice_ana)
-
   call cice_in%copydata(self%cice)
-  do i = geom%isc, geom%iec
-     do j = geom%jsc, geom%jec
-
-        aice = aice_ana%val(i,j,1)    ! ice fraction analysis
+  do j = geom%jsc, geom%jec
+     do i = geom%isc, geom%iec
+        atlas_idx = geom%atlas_ij2idx(i,j)
+        local_aice = data_aice(1, atlas_idx)    ! ice fraction analysis
 
         ! Skip if outside of domain
         if (geom%lat(i,j)>0.0_kind_real) then
@@ -214,7 +222,7 @@ subroutine shuffle_ice(self, geom, xm)
           seaice_edge = self%antarctic%seaice_edge
         endif
         if (self%cice%aice(i,j).gt.seaice_edge) cycle     ! skip if the background has more ice than the threshold
-        if (aice.le.0.0_kind_real) then
+        if (local_aice.le.0.0_kind_real) then
            self%cice%aicen(i,j,:) = 0_kind_real
            self%cice%vicen(i,j,:) = 0_kind_real
            self%cice%vsnon(i,j,:) = 0_kind_real
@@ -224,13 +232,13 @@ subroutine shuffle_ice(self, geom, xm)
            self%cice%qice(i,j,:,:) = 0_kind_real
            self%cice%sice(i,j,:,:) = 0_kind_real
            self%cice%qsno(i,j,:,:) = 0_kind_real
-           self%cice%tsfcn(i,j,:) = icepack_liquidus_temperature(s_ana%val(i,j,1))
+           self%cice%tsfcn(i,j,:) = icepack_liquidus_temperature(data_socn(1, atlas_idx))
         endif
         if (self%cice%agg%n_src == 0) cycle               ! skip if there are no points on this task with ice in the background
         ! find neighbors. TODO (G): add constraint for thickness and snow depth as well
         call self%kdtree%closestPoints(geom%lon(i,j), geom%lat(i,j), nn_max, idx)
         do k = 1, nn_max
-           testmin(k) = abs(cice_in%aice(self%cice%agg%ij(1, idx(k)), self%cice%agg%ij(2, idx(k))) - aice)
+           testmin(k) = abs(cice_in%aice(self%cice%agg%ij(1, idx(k)), self%cice%agg%ij(2, idx(k))) - local_aice)
         end do
         minidx = minloc(testmin) ! I know, I rock.
         ii = self%cice%agg%ij(1, idx(minidx(1)))
@@ -256,6 +264,8 @@ subroutine shuffle_ice(self, geom, xm)
      end do
   end do
 
+  call socn%final()
+  call aice%final()
 end subroutine shuffle_ice
 
 ! ------------------------------------------------------------------------------
@@ -266,10 +276,9 @@ subroutine cleanup_ice(self, geom, xm)
   type(soca_geom), target, intent(in)  :: geom
   type(soca_state),      intent(inout) :: xm
 
-  integer :: i, j, k, ntracers
+  integer :: i, j, k, ntracers, idx
   integer :: nt_tsfc_in, nt_qice_in, nt_qsno_in, nt_sice_in
-  real(kind=kind_real) :: aice, aice0, Tf
-  type(soca_field), pointer :: t_ana, s_ana, aice_ana, hice_ana, hsno_ana
+  real(kind=kind_real) :: local_aice, aice0, Tf
   real(kind=kind_real), allocatable :: h_bounds(:)
   real(kind=kind_real), allocatable :: tracers(:,:)   ! (ntracers, ncat)
   logical, allocatable :: first_ice(:)                ! (ncat) ! For bgc and S tracers. set to true if zapping ice.
@@ -279,12 +288,20 @@ subroutine cleanup_ice(self, geom, xm)
   integer, allocatable :: n_trcr_strata(:)            ! number of underlying tracer layers
   integer, allocatable :: nt_strata(:,:)              ! indices of underlying tracer layers
 
-  ! pointers to soca fields (most likely an analysis)
-  call xm%get("sea_water_potential_temperature",t_ana)
-  call xm%get("sea_water_salinity",s_ana)
-  call xm%get("sea_ice_area_fraction",aice_ana)
-  call xm%get("sea_ice_thickness", hice_ana)
-  call xm%get("sea_ice_snow_thickness", hsno_ana)
+  type(atlas_field) :: tocn, socn, aice, hice, hsno
+  real(kind=kind_real), pointer :: data_tocn(:,:), data_socn(:,:), data_aice(:,:), data_hice(:,:), data_hsno(:,:)
+
+  ! get fields from atlas
+  tocn = xm%afieldset%field("sea_water_potential_temperature")
+  socn = xm%afieldset%field("sea_water_salinity")
+  aice = xm%afieldset%field("sea_ice_area_fraction")
+  hice = xm%afieldset%field("sea_ice_thickness")
+  hsno = xm%afieldset%field("sea_ice_snow_thickness")
+  call tocn%data(data_tocn)
+  call socn%data(data_socn)
+  call aice%data(data_aice)
+  call hice%data(data_hice)
+  call hsno%data(data_hsno)
 
   ! get thickness category bounds
   allocate(h_bounds(0:self%ncat))
@@ -334,8 +351,10 @@ subroutine cleanup_ice(self, geom, xm)
   allocate(first_ice(self%ncat))
   first_ice(:) = .true.
 
-  do i = geom%isc, geom%iec
-     do j = geom%jsc, geom%jec
+  do j = geom%jsc, geom%jec
+     do i = geom%isc, geom%iec
+        idx = geom%atlas_ij2idx(i,j)
+
         ! setup tracers at this gridpoint
         tracers(nt_tsfc_in,:) = self%cice%tsfcn(i,j,:)
         do k = 1, self%ice_lev
@@ -348,11 +367,11 @@ subroutine cleanup_ice(self, geom, xm)
 
         ! call icepack_cleanup_itd: rebins thickness categories if necessary,
         ! eliminates very small ice areas while conserving mass and energy
-        Tf = icepack_liquidus_temperature(s_ana%val(i,j,1))
+        Tf = icepack_liquidus_temperature(data_socn(1, idx))
         call cleanup_itd(self%dt, h_bounds, self%cice%aicen(i,j,:), tracers, &
                          self%cice%vicen(i,j,:), self%cice%vsnon(i,j,:), &
                          ! ice and total water concentration are computed in the call using aicen
-                         aice0, aice, &
+                         local_aice, aice0, &
                          ! aerosol flag, topo pond flag, flag for zapping ice for bgc and s tracers
                          .false., .false., first_ice, &
                          ! tracer indices and sizes used in rebinning
@@ -373,14 +392,24 @@ subroutine cleanup_ice(self, geom, xm)
            call abor1_ftn("Soca2Cice: icepack aborted during cleanup_itd")
         endif
         ! re-compute aggregates = analysis that is effectively inserted in the restart
-        aice_ana%val(i,j,1) = sum(self%cice%aicen(i,j,:))
-        hice_ana%val(i,j,1) = sum(self%cice%vicen(i,j,:))
-        hsno_ana%val(i,j,1) = sum(self%cice%vsnon(i,j,:))
+        data_aice(1, idx) = sum(self%cice%aicen(i,j,:))
+        data_hice(1, idx) = sum(self%cice%vicen(i,j,:))
+        data_hsno(1, idx) = sum(self%cice%vsnon(i,j,:))
      end do
   end do
 
+  ! indicate dirty halos for updated fields
+  call aice%set_dirty()
+  call hice%set_dirty()
+  call hsno%set_dirty()
+
   deallocate(h_bounds, tracers, trcr_depend, trcr_base, n_trcr_strata, nt_strata, first_ice)
 
+  call tocn%final()
+  call socn%final()
+  call aice%final()
+  call hice%final()
+  call hsno%final()
 end subroutine cleanup_ice
 
 ! ------------------------------------------------------------------------------
@@ -390,17 +419,23 @@ subroutine prior_dist_rescale(self, geom, xm)
   type(soca_geom), target, intent(in)  :: geom
   type(soca_state),      intent(inout) :: xm
 
-  real(kind=kind_real) :: alpha, hice, hsno, seaice_edge, rescale_min_hice, rescale_min_hsno
-  type(soca_field), pointer :: s_ana, aice_ana, hice_ana, hsno_ana
-  integer :: c, i, j
+  real(kind=kind_real) :: alpha, local_hice, local_hsno, seaice_edge, rescale_min_hice, rescale_min_hsno
+  integer :: c, i, j, idx
 
-  call xm%get("sea_ice_area_fraction", aice_ana)
-  call xm%get("sea_ice_thickness", hice_ana)
-  call xm%get("sea_ice_snow_thickness", hsno_ana)
-  call xm%get("sea_water_salinity", s_ana)
+  type(atlas_field) :: aice, hice, hsno, socn
+  real(kind=kind_real), pointer :: data_aice(:,:), data_hice(:,:), data_hsno(:,:)
 
-  do i = geom%isc, geom%iec
-     do j = geom%jsc, geom%jec
+  ! get fields from atlas
+  aice = xm%afieldset%field("sea_ice_area_fraction")
+  hice = xm%afieldset%field("sea_ice_thickness")
+  hsno = xm%afieldset%field("sea_ice_snow_thickness")
+  call aice%data(data_aice)
+  call hice%data(data_hice)
+  call hsno%data(data_hsno)
+
+  do j = geom%jsc, geom%jec
+    do i = geom%isc, geom%iec
+      idx = geom%atlas_ij2idx(i,j)
 
         if (geom%lat(i,j)>0.0_kind_real) then
           if (.not. self%arctic%rescale_prior) cycle
@@ -416,7 +451,7 @@ subroutine prior_dist_rescale(self, geom, xm)
         if (self%cice%aice(i,j).le.seaice_edge) cycle ! Only rescale within the icepack
 
         ! rescale background to match aggregate ice concentration analysis
-        alpha = aice_ana%val(i,j,1)/self%cice%aice(i,j)
+        alpha = data_aice(1, idx)/self%cice%aice(i,j)
         self%cice%aice(i,j) = alpha * self%cice%aice(i,j)
         do c = 1, self%ncat
            self%cice%aicen(i,j,c) = alpha*self%cice%aicen(i,j,c)
@@ -425,22 +460,24 @@ subroutine prior_dist_rescale(self, geom, xm)
         end do
 
         ! adjust ice volume to match mean cell thickness
-        hice = sum(self%cice%vicen(i,j,:))
-        if (hice.gt.rescale_min_hice) then
-           alpha = hice_ana%val(i,j,1)/hice
+        local_hice = sum(self%cice%vicen(i,j,:))
+        if (local_hice.gt.rescale_min_hice) then
+           alpha = data_hice(1, idx)/local_hice
            self%cice%vicen(i,j,:) = alpha*self%cice%vicen(i,j,:)
         end if
 
         ! adjust snow volume to match mean cell thickness
-        hsno = sum(self%cice%vsnon(i,j,:))
-        if (hsno.gt.rescale_min_hsno) then
-           alpha = hsno_ana%val(i,j,1)/hsno
+        local_hsno = sum(self%cice%vsnon(i,j,:))
+        if (local_hsno.gt.rescale_min_hsno) then
+           alpha = data_hsno(1, idx)/local_hsno
            self%cice%vsnon(i,j,:) = alpha*self%cice%vsnon(i,j,:)
         end if
-
-     end do
+    end do
   end do
 
+  call aice%final()
+  call hice%final()
+  call hsno%final()
 end subroutine prior_dist_rescale
 
 ! ------------------------------------------------------------------------------
