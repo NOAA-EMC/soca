@@ -108,6 +108,13 @@ inline void qcIncrement(const soca::State& xb,
   int nSmoothingIterations = config.getInt("increment smoothing iterations", 30);
   const double rhoMinGrad = config.getDouble("min stable density gradient", 1e-4);
 
+  // Shallow depth filter: taper T/S increments to zero in shallow regions
+  if (config.has("shallow depth limit")) {
+    const double depthMin = config.getDouble("shallow depth limit.min depth");
+    const double depthMax = config.getDouble("shallow depth limit.max depth");
+    applyShallowDepthFilter(dxFs, viewBathy, ghostView, depthMin, depthMax);
+  }
+
   // Steric height increment and stability checks
   applyWaterColumnStabilityCheck(dxFs,
                                  viewTempBkg, viewSaltBkg,

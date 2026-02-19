@@ -88,6 +88,9 @@ increment postprocessing:
     steric increment:
       linear variable changes:
       - linear variable change name: BalanceSOCA
+    shallow depth limit:
+      min depth: 500.0    # [m] increments are zero at or below this depth
+      max depth: 1000.0   # [m] increments are unmodified at or above this depth
 
 analysis postprocessing:
   sea ice variable change:

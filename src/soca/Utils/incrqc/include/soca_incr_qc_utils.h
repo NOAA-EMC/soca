@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -318,6 +319,76 @@ inline void applyStericHeightConstraint(
 
   // Reflect rescaled steric height in SSH
   viewSshIncr(jnode, 0) = steric2;
+}
+
+/**
+ * @brief Applies a depth-based tapering to temperature and salinity increments.
+ *
+ * This function smoothly reduces the amplitude of T and S increments to zero in
+ * shallow regions, following the bathymetry. The tapering is controlled by two
+ * depth thresholds read from configuration:
+ *
+ *   - `shallow depth limit.min depth` (d_min): Below this depth, increments are
+ *     zeroed out entirely.
+ *   - `shallow depth limit.max depth` (d_max): Above this depth, increments are
+ *     left unchanged.
+ *
+ * Between d_min and d_max the increment is scaled by a smooth weight:
+ *
+ *   w = 0.5 * (1 - cos(π * (bathy - d_min) / (d_max - d_min)))
+ *
+ * which transitions from 0 at d_min to 1 at d_max in a C¹-smooth manner
+ * (zero derivative at both endpoints).
+ *
+ * @param dxFs [in,out] Field set containing increments; T and S fields are modified
+ *             in place.
+ * @param viewBathy [in] Bathymetry (total water column depth, positive for ocean).
+ * @param ghostView [in] Ghost-node indicator (>0 for ghost nodes).
+ * @param depthMin  [in] Depth at or below which increments are set to zero (metres).
+ * @param depthMax  [in] Depth at or above which increments are left unmodified (metres).
+ */
+inline void applyShallowDepthFilter(
+    atlas::FieldSet& dxFs,
+    const atlas::array::ArrayView<const double, 2>& viewBathy,
+    const atlas::array::ArrayView<const int, 1>& ghostView,
+    const double depthMin,
+    const double depthMax) {
+
+  ASSERT(depthMax > depthMin);
+
+  auto viewTempIncr = atlas::array::make_view<double, 2>(
+      dxFs["sea_water_potential_temperature"]);
+  auto viewSaltIncr = atlas::array::make_view<double, 2>(
+      dxFs["sea_water_salinity"]);
+
+  const atlas::idx_t njnodes = viewTempIncr.shape(0);
+  const atlas::idx_t nlevels = viewTempIncr.shape(1);
+
+  for (atlas::idx_t jnode = 0; jnode < njnodes; ++jnode) {
+    if (ghostView(jnode) > 0) continue;
+    if (viewBathy(jnode, 0) <= 0.0) continue;
+
+    const double bathy = viewBathy(jnode, 0);
+
+    // Compute tapering weight
+    double weight = 1.0;
+    if (bathy <= depthMin) {
+      weight = 0.0;
+    } else if (bathy < depthMax) {
+      // Smooth cosine taper: 0 at depthMin, 1 at depthMax, zero derivatives at endpoints
+      const double t = (bathy - depthMin) / (depthMax - depthMin);
+      weight = 0.5 * (1.0 - std::cos(M_PI * t));
+    }
+
+    // Apply weight to all levels
+    for (atlas::idx_t level = 0; level < nlevels; ++level) {
+      viewTempIncr(jnode, level) *= weight;
+      viewSaltIncr(jnode, level) *= weight;
+    }
+  }
+
+  oops::Log::info() << "QC: Applied shallow depth filter — zeroing increments for depths < "
+                     << depthMin << " m, tapering up to " << depthMax << " m" << std::endl;
 }
 
 /**

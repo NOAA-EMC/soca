@@ -12,6 +12,7 @@ The QC process ensures:
 - **Analysis Bounds Enforcement**: Adjusts increments so that the analysis stays within user-specified bounds for temperature and salinity.
 - **Water Column Stability Check**: Ensures that the increment does not introduce new static instabilities in the water column by checking density profiles.
 - **Steric Height Constraint**: Limits the steric height increment to prevent unrealistically large changes to sea surface height.
+- **Shallow Depth Filter**: Smoothly tapers T/S increments to zero in shallow regions following a cosine taper between configurable depth thresholds.
 - **Iterative Refinement**: Applies stability checks iteratively with optional smoothing to refine corrections.
 
 ## Usage
@@ -34,6 +35,10 @@ state bounds:
 
 increment max:
   steric: 0.5  # [m]
+
+shallow depth limit:
+  min depth: 10.0   # [m] increments are zero at or below this depth
+  max depth: 100.0   # [m] increments are full strength at or above this depth
 
 increment stability iterations: 10
 increment smoothing iterations: 30
@@ -162,7 +167,38 @@ For each node, the check:
   - Computed steric height using 3 alternative formulations
 - This constraint ensures the increment does not introduce unrealistically large SSH adjustments that could degrade ocean model balance or lead to unrealistic surface gravity waves.
 
-### 3. Hard Bounds Enforcement
+### 3. Shallow Depth Filter
+
+This filter smoothly tapers temperature and salinity increments to zero in shallow regions where the ocean model is less trustworthy or where small bathymetry errors can produce large analysis artefacts.
+
+#### Configuration
+
+```yaml
+shallow depth limit:
+  min depth: 10.0    # [m] increments are zero at or below this depth
+  max depth: 100.0   # [m] increments are unmodified at or above this depth
+```
+
+#### Method
+
+For each ocean node the bathymetry *h* (total water column depth) is compared against the two thresholds:
+
+- **h ≤ d_min**: the weight is 0 — increments are completely removed.
+- **d_min < h < d_max**: a smooth cosine taper is applied:
+  \[
+  w = \frac{1}{2}\left(1 - \cos\!\left(\pi\,\frac{h - d_{\min}}{d_{\max} - d_{\min}}\right)\right)
+  \]
+  This provides a C¹-smooth transition (zero derivative at both endpoints).
+- **h ≥ d_max**: the weight is 1 — increments are left unchanged.
+
+The weight *w* is applied uniformly to all vertical levels at a given node.
+
+#### Notes
+
+- The filter is optional; it is only activated when the `shallow depth limit` key is present in the configuration.
+- Applied before the stability and steric height checks so that downstream QC operates on already-tapered increments.
+
+### 4. Hard Bounds Enforcement
 
 - Brute-force check to make sure analysis values of temperature and salinity remain within defined minimum and maximum values.
 - Adjusts the increment field accordingly.
