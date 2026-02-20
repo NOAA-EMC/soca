@@ -108,11 +108,15 @@ inline void qcIncrement(const soca::State& xb,
   int nSmoothingIterations = config.getInt("increment smoothing iterations", 30);
   const double rhoMinGrad = config.getDouble("min stable density gradient", 1e-4);
 
-  // Shallow depth filter: taper T/S increments to zero in shallow regions
-  if (config.has("shallow depth limit")) {
-    const double depthMin = config.getDouble("shallow depth limit.min depth");
-    const double depthMax = config.getDouble("shallow depth limit.max depth");
-    applyShallowDepthFilter(dxFs, viewBathy, ghostView, depthMin, depthMax);
+  // Coastal increment filter: taper T/S increments to zero near coastlines
+  if (config.has("coastal increment filter")) {
+    const double distMin = config.getDouble("coastal increment filter.min distance");
+    const double distMax = config.getDouble("coastal increment filter.max distance");
+    // distance_from_coast lives in the geometry fieldset, not the state
+    auto viewDist = atlas::array::make_view<const double, 2>(
+        geom.fields()["distance_from_coast"]);
+    applyCoastalIncrementFilter(dxFs, viewDist, ghostView, viewBathy,
+                                distMin, distMax);
   }
 
   // Steric height increment and stability checks
