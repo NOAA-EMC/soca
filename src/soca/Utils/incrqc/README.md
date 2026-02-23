@@ -30,23 +30,22 @@ soca::incrqc::qcIncrement(xb, dx, config, geom);
 
 ```yaml
 state bounds:
-  sea_water_potential_temperature: [-1.5, 45.0]
-  sea_water_salinity: [0.0, 45.0]
+  sea_water_potential_temperature: [-2.5, 36.0]
+  sea_water_salinity: [0.0, 44.0]
 
-increment max:
-  steric: 0.5  # [m]
+absolute steric increment max: 0.5  # [m]
+
+steric variable change:
+  linear variable changes:
+  - linear variable change name: BalanceSOCA
+
+stability check:
+  increment stability iterations: 20
+  min stable density gradient: 1.0e-4  # [kg/m³/m]
 
 coastal increment filter:
   min distance: 0.0       # [m] zero increments at the coast
-  max distance: 100000.0  # [m] full increments beyond 100 km from coast
-
-increment stability iterations: 10
-increment smoothing iterations: 30
-min stable density gradient: 1.0e-4  # [kg/m³/m]
-
-steric increment:
-  linear variable changes:
-  - linear variable change name: BalanceSOCA
+  max distance: 200000.0  # [m] full increments beyond 200 km from coast
 ```
 
 ---
@@ -98,43 +97,33 @@ The check operates iteratively (with a user-defined number of iterations), and f
 #### Stability Correction Details
 
 **Nomenclature:**
-- \( \rho^{\text{bkg}}_k = \rho(T^{\text{bkg}}_k, S^{\text{bkg}}_k) \): background density at level \(k\)
-- \( \rho^{\text{ana}}_k = \rho(T^{\text{bkg}}_k + \delta T_k, S^{\text{bkg}}_k + \delta S_k) \): analysis (background + increment) density at level \(k\)
-- \( z_k \): depth at level \(k\) (positive downward)
-- \( \frac{\partial \rho^{\text{bkg}}}{\partial z} \big|_k = \frac{\rho^{\text{bkg}}_k - \rho^{\text{bkg}}_{k-1}}{z_k - z_{k-1}} \)
-- \( \frac{\partial \rho^{\text{ana}}}{\partial z} \big|_k = \frac{\rho^{\text{ana}}_k - \rho^{\text{ana}}_{k-1}}{z_k - z_{k-1}} \)
-- \( \rho_{z}^{\text{min}} = \frac{\rho_0 N^2}{g}\) where \( N^2 \) is the Brunt–Väisälä frequency for a weakly stratified ocean.
+- $\rho^{\text{bkg}}_k = \rho(T^{\text{bkg}}_k, S^{\text{bkg}}_k)$: background density at level $k$
+- $\rho^{\text{ana}}_k = \rho(T^{\text{bkg}}_k + \delta T_k, S^{\text{bkg}}_k + \delta S_k)$: analysis (background + increment) density at level $k$
+- $z_k$: depth at level $k$ (positive downward)
+- $\frac{\partial \rho^{\text{bkg}}}{\partial z} \big|_k = \frac{\rho^{\text{bkg}}_k - \rho^{\text{bkg}}_{k-1}}{z_k - z_{k-1}}$
+- $\frac{\partial \rho^{\text{ana}}}{\partial z} \big|_k = \frac{\rho^{\text{ana}}_k - \rho^{\text{ana}}_{k-1}}{z_k - z_{k-1}}$
+- $\rho_{z}^{\text{min}} = \frac{\rho_0 N^2}{g}$ where $N^2$ is the Brunt–Väisälä frequency for a weakly stratified ocean.
 
 The increment is flagged as **potentially destabilizing** if either:
 
 1. The background is stable:
-   \[
-   \frac{\partial \rho^{\text{bkg}}}{\partial z} \big|_k \geq 0
-   \quad \text{and} \quad
-   \frac{\partial \rho^{\text{ana}}}{\partial z} \big|_k < 0
-   \]
+
+$$\frac{\partial \rho^{\text{bkg}}}{\partial z} \bigg|_k \geq 0 \quad \text{and} \quad \frac{\partial \rho^{\text{ana}}}{\partial z} \bigg|_k < 0$$
 2. The background is already unstable but the analysis makes it worse:
-   \[
-   \frac{\partial \rho^{\text{bkg}}}{\partial z} \big|_k < 0
-   \quad \text{and} \quad
-   \frac{\partial \rho^{\text{ana}}}{\partial z} \big|_k < \frac{\partial \rho^{\text{bkg}}}{\partial z} \big|_k
-   \]
+
+$$\frac{\partial \rho^{\text{bkg}}}{\partial z} \bigg|_k < 0 \quad \text{and} \quad \frac{\partial \rho^{\text{ana}}}{\partial z} \bigg|_k < \frac{\partial \rho^{\text{bkg}}}{\partial z} \bigg|_k$$
 
 In these cases, a correction factor is applied to the temperature and salinity increments:
-\[
-\delta T_k \leftarrow \delta T_k \cdot \left(1 - 0.5 \cdot \text{clamp}\left(\frac{|\frac{\partial \rho^{\text{ana}}}{\partial z}|_k}{\rho_{z}^{\text{min}}}, 0.1, 1.0\right)\right)
-\]
-\[
-\delta S_k \leftarrow \delta S_k \cdot \left(1 - 0.5 \cdot \text{clamp}\left(\frac{|\frac{\partial \rho^{\text{ana}}}{\partial z}|_k}{\rho_{z}^{\text{min}}}, 0.1, 1.0\right)\right)
-\]
+
+$$\delta T_k \leftarrow \delta T_k \cdot \left(1 - 0.5 \cdot \text{clamp}\left(\frac{\left|\frac{\partial \rho^{\text{ana}}}{\partial z}\right|_k}{\rho_{z}^{\text{min}}},\ 0.1,\ 1.0\right)\right)$$
+
+$$\delta S_k \leftarrow \delta S_k \cdot \left(1 - 0.5 \cdot \text{clamp}\left(\frac{\left|\frac{\partial \rho^{\text{ana}}}{\partial z}\right|_k}{\rho_{z}^{\text{min}}},\ 0.1,\ 1.0\right)\right)$$
 
 Finally, corrected values are optionally smoothed using neighbor averages:
-\[
-\delta T_k \leftarrow \overline{\delta T}_k^{\text{neighbors}}
-\]
-\[
-\delta S_k \leftarrow \overline{\delta S}_k^{\text{neighbors}}
-\]
+
+$$\delta T_k \leftarrow \overline{\delta T}_k^{\text{neighbors}}$$
+
+$$\delta S_k \leftarrow \overline{\delta S}_k^{\text{neighbors}}$$
 
 #### Notes
 
@@ -152,7 +141,7 @@ This check constrains the **sea surface height (SSH) increment** derived from te
 For each node, the check:
 
 1. **Evaluates the SSH increment** derived from temperature and salinity profiles.
-2. **Checks if the absolute SSH increment exceeds** a configured maximum (`increment max.steric`).
+2. **Checks if the absolute SSH increment exceeds** a configured maximum (`absolute steric increment max`).
 3. If the threshold is exceeded:
    - **Computes a rescaling factor** based on the ratio of the maximum allowed SSH increment to the current value.
    - **Scales down the temperature and salinity increments** by this factor to reduce their effect on SSH.
@@ -187,9 +176,9 @@ For each ocean node the distance from coast *d* is compared against the two thre
 
 - **d ≤ d_min**: the weight is 0 — increments are completely removed.
 - **d_min < d < d_max**: a smooth cosine taper is applied:
-  \[
-  w = \frac{1}{2}\left(1 - \cos\!\left(\pi\,\frac{d - d_{\min}}{d_{\max} - d_{\min}}\right)\right)
-  \]
+
+$$w = \frac{1}{2}\left(1 - \cos\!\left(\pi\,\frac{d - d_{\min}}{d_{\max} - d_{\min}}\right)\right)$$
+
   This provides a C¹-smooth transition (zero derivative at both endpoints).
 - **d ≥ d_max**: the weight is 1 — increments are left unchanged.
 
@@ -208,11 +197,6 @@ The weight *w* is applied uniformly to all vertical levels at a given node.
 
 ---
 
-## License
-
-This library is extracted from GDASApp, which is maintained by NOAA-EMC.
-Please refer to the original repository for licensing information:
-https://github.com/NOAA-EMC/GDASApp
 
 ## References
 

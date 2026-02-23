@@ -45,7 +45,7 @@ inline void qcIncrement(const soca::State& xb,
   oops::Log::info() << "======      Quality control on increment" << std::endl;
 
   // Replace the ssh increment with a steric height increment
-  eckit::LocalConfiguration lvcConfig(config, "steric increment");
+  eckit::LocalConfiguration lvcConfig(config, "steric variable change");
   soca::utils::computeStericHeightIncrement(geom, dx, lvcConfig, xb, dx.variables());
 
   atlas::FieldSet xbFs, dxFs;
@@ -78,7 +78,7 @@ inline void qcIncrement(const soca::State& xb,
   };
 
   // Get increment bounds from configuration
-  double deltaSshMax = config.getDouble("increment max.steric", 10.0);
+  double deltaSshMax = config.getDouble("absolute steric increment max", 10.0);
   oops::Log::debug() << "QC: max steric height increment: " << deltaSshMax << std::endl;
 
   // Prepare views for increment and background fields
@@ -104,10 +104,6 @@ inline void qcIncrement(const soca::State& xb,
   meshConn.nodeColumns.haloExchange(xbFs["sea_water_salinity"]);
   meshConn.nodeColumns.haloExchange(xbFs["sea_water_cell_thickness"]);
 
-  int niterations = config.getInt("increment stability iterations", 10);
-  int nSmoothingIterations = config.getInt("increment smoothing iterations", 30);
-  const double rhoMinGrad = config.getDouble("min stable density gradient", 1e-4);
-
   // Coastal increment filter: taper T/S increments to zero near coastlines
   if (config.has("coastal increment filter")) {
     const double distMin = config.getDouble("coastal increment filter.min distance");
@@ -119,13 +115,21 @@ inline void qcIncrement(const soca::State& xb,
                                 distMin, distMax);
   }
 
-  // Steric height increment and stability checks
-  applyWaterColumnStabilityCheck(dxFs,
-                                 viewTempBkg, viewSaltBkg,
-                                 viewHocn, viewDepth, lonlat,
-                                 niterations, rhoMinGrad, nSmoothingIterations,
-                                 viewBathy, meshConn);
+  // Stability checks
+  if (config.has("stability check")) {
+    int niterations = config.getInt("stability check.increment stability iterations", 10);
+    int nSmoothingIterations = config.getInt("stability check.increment smoothing iterations", 30);
+    const double rhoMinGrad = config.getDouble("stability check.min stable density gradient", 1e-4);
+    applyWaterColumnStabilityCheck(dxFs,
+                                   viewTempBkg, viewSaltBkg,
+                                   viewHocn, viewDepth, lonlat,
+                                   niterations, rhoMinGrad, nSmoothingIterations,
+                                   viewBathy, meshConn);
+  }
 
+  // Apply steric height constraint (alway on, large bounds by default)
+  // Limit the SSH increment to deltaSshMax by rescaling T/S increments if necessary
+  // Replaces the ssh increment with the final steric height increment
   for (atlas::idx_t jnode = 0; jnode < viewTempIncr.shape(0); ++jnode) {
     // Skip ghost and land nodes
     if (ghostView(jnode) > 0) continue;

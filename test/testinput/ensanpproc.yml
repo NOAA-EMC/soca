@@ -81,13 +81,16 @@ increment postprocessing:
     state bounds:
       sea_water_potential_temperature: [-2.5, 36.0]
       sea_water_salinity: [0.0, 44.0]
-    increment max:
-      steric: 0.5
-    increment stability iterations: 20
-    min stable density gradient: 1e-4
-    steric increment:
+
+    absolute steric increment max: 0.5
+    steric variable change:
       linear variable changes:
       - linear variable change name: BalanceSOCA
+
+    stability check:
+      increment stability iterations: 20
+      min stable density gradient: 1e-4
+
     coastal increment filter:
       min distance: 0.0       # [m] zero increments at the coast
       max distance: 200000.0  # [m] full increments beyond 200 km from coast
