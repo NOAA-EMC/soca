@@ -10,7 +10,7 @@
 if( HAVE_OMP )
   set( CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -qopenmp")
 else( )
-  set( CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -qopenmp-stubs")
+  set( CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
 endif( )
 
 ####################################################################
