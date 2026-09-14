@@ -1071,6 +1071,8 @@ function soca_genfilename(f_conf,length,vdate,date_cols,domain_type)
   integer lenfn
   character(len=:), allocatable :: str
 
+  soca_genfilename = ""
+
   call f_conf%get_or_die("datadir", str)
   fdbdir = str
   call f_conf%get_or_die("exp", str)
@@ -1118,6 +1120,10 @@ function soca_genfilename(f_conf,length,vdate,date_cols,domain_type)
      endif
      lenfn = lenfn + 1 + LEN_TRIM(validitydate)
      soca_genfilename = TRIM(prefix) // "." // TRIM(validitydate)
+  endif
+
+  if (typ/="fc" .and. typ/="ens" .and. typ/="an" .and. typ/="incr") then
+       call abor1_ftn("fields:genfilename: unsupported type " // trim(typ))
   endif
 
   if (lenfn>length) &
